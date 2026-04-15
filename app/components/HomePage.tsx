@@ -68,7 +68,7 @@ export default function HomePage() {
       </div>
 
       {/* ── Text — centered, top ── */}
-      <div className="fixed inset-x-0 top-0 flex justify-center pt-16 md:pt-20 pointer-events-none">
+      <div className="fixed inset-x-0 top-0 flex justify-center pt-28 md:pt-32 pointer-events-none">
         <motion.div
           className="text-center"
           initial={{ opacity: 0, y: -16 }}
