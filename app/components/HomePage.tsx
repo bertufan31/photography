@@ -1,108 +1,192 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 
-type TextPhase = "idle" | "animating" | "complete";
+// ── Config ──────────────────────────────────────────────
+const TOTAL_FRAMES = 5;
+// How many px of scroll corresponds to the full sequence
+const SEQUENCE_SCROLL_HEIGHT = 3000;
 
+// ────────────────────────────────────────────────────────
 export default function HomePage() {
-  const [phase, setPhase] = useState<TextPhase>("idle");
-  const [scrollY, setScrollY] = useState(0);
-  const [frameIndex, setFrameIndex] = useState(0);
+  const [frame, setFrame] = useState(0);
+  const [textVisible, setTextVisible] = useState(false);
+  const [pageHeight, setPageHeight] = useState(SEQUENCE_SCROLL_HEIGHT + 900);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const imagesRef = useRef<HTMLImageElement[]>([]);
+  const rafRef = useRef<number | null>(null);
+  const currentFrameRef = useRef(0);
 
-  // Auto-start animation
+  // ── Load all frames ────────────────────────────────────
   useEffect(() => {
-    const timer = setTimeout(() => setPhase("animating"), 500);
-    return () => clearTimeout(timer);
+    let loaded = 0;
+    const imgs: HTMLImageElement[] = [];
+
+    for (let i = 0; i < TOTAL_FRAMES; i++) {
+      const img = new window.Image();
+      const num = String(i + 1).padStart(3, "0");
+      img.src = `/sequence/frame-${num}.png`;
+      img.onload = () => {
+        loaded++;
+        // Draw first frame as soon as it's ready
+        if (i === 0) drawFrame(0, imgs);
+        if (loaded === TOTAL_FRAMES) {
+          imagesRef.current = imgs;
+        }
+      };
+      imgs[i] = img;
+    }
+    imagesRef.current = imgs;
+
+    // Set accurate page height after mount
+    setPageHeight(SEQUENCE_SCROLL_HEIGHT + window.innerHeight);
+
+    // Show text shortly after mount
+    const t = setTimeout(() => setTextVisible(true), 600);
+    return () => clearTimeout(t);
   }, []);
 
-  // Track scroll for PNG sequence
+  // ── Draw a frame on canvas ──────────────────────────────
+  function drawFrame(index: number, imgs?: HTMLImageElement[]) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const sources = imgs ?? imagesRef.current;
+    const img = sources[index];
+    if (!img?.complete) return;
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  }
+
+  // ── Scroll → frame mapping ──────────────────────────────
   useEffect(() => {
-    const handleScroll = () => {
-      const scrollTop = window.scrollY;
-      setScrollY(scrollTop);
-      // Map scroll position to frame (adjust divisor based on total frames)
-      const newFrame = Math.min(Math.floor(scrollTop / 50), 49); // assuming 50 total frames
-      setFrameIndex(newFrame);
+    function onScroll() {
+      const progress = Math.min(
+        window.scrollY / SEQUENCE_SCROLL_HEIGHT,
+        1
+      );
+      const newFrame = Math.min(
+        Math.floor(progress * TOTAL_FRAMES),
+        TOTAL_FRAMES - 1
+      );
+
+      if (newFrame !== currentFrameRef.current) {
+        currentFrameRef.current = newFrame;
+        setFrame(newFrame);
+
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = requestAnimationFrame(() => drawFrame(newFrame));
+      }
+    }
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // Text words to animate
-  const words = ["It", "all", "starts", "with", "a", "flash"];
-  const containerVariants = {
-    hidden: { opacity: 0 },
-    visible: {
-      opacity: 1,
-      transition: {
-        staggerChildren: 0.15,
-        delayChildren: 0.3,
-      },
-    },
-  };
-
-  const wordVariants = {
-    hidden: { opacity: 0, y: 20 },
-    visible: {
-      opacity: 1,
-      y: 0,
-      transition: { duration: 0.8 },
-    },
-  };
+  // ── Redraw on resize ───────────────────────────────────
+  useEffect(() => {
+    function onResize() {
+      drawFrame(currentFrameRef.current);
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   return (
-    <main className="relative w-screen h-screen overflow-x-hidden">
-      {/* PNG Sequence Background */}
-      <div className="fixed inset-0 -z-10 bg-[#0a0a0a]">
-        <img
-          src={`/sequence/frame-${String(frameIndex + 1).padStart(3, "0")}.png`}
-          alt="Sequence frame"
-          className="w-full h-full object-cover opacity-40"
-          onError={() => {
-            /* Fallback for missing frames */
+    // Tall page enables scroll-driven sequence
+    <div style={{ height: `${pageHeight}px` }}>
+
+      {/* ── Fixed full-screen canvas ── */}
+      <div className="fixed inset-0 bg-black">
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full"
+          style={{ display: "block" }}
+        />
+        {/* Subtle dark vignette so text stays legible */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,0.55) 100%)",
           }}
         />
       </div>
 
-      {/* Animated Text */}
-      <div className="flex items-center justify-center h-screen w-screen">
+      {/* ── Sticky text overlay ── */}
+      <div className="fixed inset-0 flex items-end pointer-events-none">
         <motion.div
-          className="text-center px-6"
-          variants={containerVariants}
-          initial="hidden"
-          animate={phase === "animating" ? "visible" : "hidden"}
+          className="px-10 pb-14 md:px-16 md:pb-20"
+          initial={{ opacity: 0, y: 24 }}
+          animate={textVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: 24 }}
+          transition={{ duration: 1.1 }}
         >
-          <div className="flex flex-wrap justify-center gap-3">
-            {words.map((word, i) => (
-              <motion.span
-                key={i}
-                variants={wordVariants}
-                className="text-6xl md:text-7xl font-black text-white tracking-tight"
-              >
-                {word}
-              </motion.span>
-            ))}
-          </div>
+          {/* Line 1 — Kalnia Regular */}
+          <p
+            style={{
+              fontFamily: "var(--font-kalnia), serif",
+              fontWeight: 400,
+              fontSize: "clamp(2.2rem, 5vw, 4.8rem)",
+              lineHeight: 1.08,
+              color: "#fff",
+              letterSpacing: "-0.01em",
+            }}
+          >
+            It all starts with
+          </p>
+
+          {/* Line 2 — Kalnia Bold */}
+          <p
+            style={{
+              fontFamily: "var(--font-kalnia), serif",
+              fontWeight: 700,
+              fontSize: "clamp(2.2rem, 5vw, 4.8rem)",
+              lineHeight: 1.08,
+              color: "#fff",
+              letterSpacing: "-0.01em",
+            }}
+          >
+            a flash.
+          </p>
         </motion.div>
       </div>
 
-      {/* Scroll hint */}
-      <div className="fixed bottom-8 left-1/2 -translate-x-1/2 text-white/40 text-sm flex flex-col items-center gap-2">
-        <span>Scroll to explore</span>
-        <motion.svg
-          width="20" height="30" viewBox="0 0 20 30"
-          animate={{ y: [0, 8, 0] }}
-          transition={{ repeat: Infinity, duration: 1.5 }}
+      {/* ── Scroll cue (visible only at top) ── */}
+      <motion.div
+        className="fixed bottom-8 right-10 flex flex-col items-center gap-1 pointer-events-none"
+        animate={{ opacity: frame > 0 ? 0 : 0.4 }}
+        transition={{ duration: 0.4 }}
+      >
+        <span
+          style={{
+            fontFamily: "var(--font-kalnia), serif",
+            fontWeight: 400,
+            fontSize: "0.65rem",
+            letterSpacing: "0.18em",
+            textTransform: "uppercase",
+            color: "#fff",
+          }}
         >
-          <line x1="10" y1="0" x2="10" y2="20" stroke="currentColor" strokeWidth="1.5" />
-          <polyline points="3,15 10,27 17,15" stroke="currentColor" strokeWidth="1.5" fill="none" />
+          Scroll
+        </span>
+        <motion.svg
+          width="16" height="24" viewBox="0 0 16 24"
+          fill="none" stroke="white" strokeWidth="1.2"
+          animate={{ y: [0, 5, 0] }}
+          transition={{ repeat: Infinity, duration: 1.4 }}
+        >
+          <line x1="8" y1="0" x2="8" y2="18" />
+          <polyline points="2,12 8,22 14,12" />
         </motion.svg>
-      </div>
-
-      {/* Extended scroll area for full sequence */}
-      <div style={{ height: "5000px" }} />
-    </main>
+      </motion.div>
+    </div>
   );
 }
